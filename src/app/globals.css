@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+:root {
+  --background: 223 49% 5%;
+  --surface: 222 42% 9%;
+  --surface-elevated: 224 35% 13%;
+  --foreground: 210 40% 96%;
+  --muted-foreground: 217 19% 69%;
+
+  --primary: 160 84% 39%;
+  --primary-foreground: 223 49% 5%;
+  --primary-hover: 160 84% 46%;
+  --secondary-accent: 239 84% 67%;
+
+  --success: 142 71% 45%;
+  --warning: 38 92% 50%;
+  --error: 0 84% 60%;
+  --info: 199 89% 48%;
+
+  --border: 220 28% 21%;
+  --ring: 160 84% 45%;
+  --radius: 0.85rem;
+
+  --glass-bg: 255 255 255;
+  --glass-alpha: 0.05;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.08;
+
+  --shadow-soft: 0 12px 28px -18px rgba(16, 185, 129, 0.35);
+  --shadow-depth: 0 24px 60px -28px rgba(7, 10, 20, 0.85), 0 8px 24px -16px rgba(99, 102, 241, 0.35);
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-surface: hsl(var(--surface));
+  --color-surface-elevated: hsl(var(--surface-elevated));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-hover: hsl(var(--primary-hover));
+  --color-secondary-accent: hsl(var(--secondary-accent));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-error: hsl(var(--error));
+  --color-info: hsl(var(--info));
+  --color-border: hsl(var(--border));
+  --color-ring: hsl(var(--ring));
+  --radius-card: var(--radius);
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  background-image:
+    radial-gradient(circle at 12% 12%, rgba(16, 185, 129, 0.14), transparent 30%),
+    radial-gradient(circle at 85% 15%, rgba(99, 102, 241, 0.16), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 30%);
+  background-attachment: fixed;
+}
+
+.glass {
+  background: rgba(var(--glass-bg), var(--glass-alpha));
+  border: 1px solid rgba(var(--glass-border), var(--glass-border-alpha));
+  backdrop-filter: blur(12px);
+}
+
+.glow-primary {
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18), 0 0 30px -10px rgba(16, 185, 129, 0.5);
+}
+
+.depth-shadow {
+  box-shadow: var(--shadow-depth);
+}
+
+.soft-shadow {
+  box-shadow: var(--shadow-soft);
+}
+
+.code-ltr {
+  direction: ltr;
+  text-align: left;
+  font-family: var(--font-mono), monospace;
+}
+
+@keyframes nftBlobMove {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(20px, -15px, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-14px, 10px, 0) scale(0.94);
+  }
+}
+
+@keyframes nftFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.nft-blob {
+  animation: nftBlobMove 10s ease-in-out infinite;
+}
+
+.nft-float {
+  animation: nftFloat 4.2s ease-in-out infinite;
+}
+
+.nft-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 0.4px, transparent 0.4px);
+  background-size: 4px 4px;
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+}
