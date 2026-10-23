@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Menu } from "lucide-react";
-import { useState } from "react";
+import { signOut, useSession } from "next-auth/react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { fadeIn } from "@/lib/motion";
 import { MobileNav } from "./mobile-nav";
 
-const navItems = [
+const baseNavItems = [
   { href: "/", label: "خانه" },
   { href: "/courses", label: "دوره‌ها" },
   { href: "/lab", label: "آزمایشگاه" },
@@ -17,6 +18,17 @@ const navItems = [
 
 export function Header() {
   const [open, setOpen] = useState(false);
+  const { data: session, status } = useSession();
+  const isAuthenticated = status === "authenticated" && Boolean(session?.user);
+
+  const navItems = useMemo(
+    () => (isAuthenticated ? [...baseNavItems, { href: "/dashboard", label: "داشبورد" }] : baseNavItems),
+    [isAuthenticated],
+  );
+
+  const handleSignOut = () => {
+    void signOut({ callbackUrl: "/" });
+  };
 
   return (
     <motion.header
@@ -53,22 +65,34 @@ export function Header() {
         </nav>
 
         <div className="hidden items-center gap-2 md:flex">
-          <Link href="/login">
-            <Button variant="ghost" size="sm">
-              ورود
-            </Button>
-          </Link>
-          <Link href="/register">
-            <Button
-              size="sm"
-              className="border-0 bg-[linear-gradient(135deg,#10B981,#3B82F6)] text-white shadow-[0_0_30px_-10px_rgba(16,185,129,0.7)] hover:opacity-95"
-            >
-              شروع رایگان
-            </Button>
-          </Link>
+          {isAuthenticated ? (
+            <>
+              <span className="max-w-40 truncate text-xs text-muted-foreground" title={session?.user?.email ?? undefined}>
+                {session?.user?.name || session?.user?.email}
+              </span>
+              <Link href="/dashboard">
+                <Button variant="ghost" size="sm">داشبورد</Button>
+              </Link>
+              <Button variant="outline" size="sm" onClick={handleSignOut}>خروج</Button>
+            </>
+          ) : (
+            <>
+              <Link href="/login">
+                <Button variant="ghost" size="sm">ورود</Button>
+              </Link>
+              <Link href="/register">
+                <Button
+                  size="sm"
+                  className="border-0 bg-[linear-gradient(135deg,#10B981,#3B82F6)] text-white shadow-[0_0_30px_-10px_rgba(16,185,129,0.7)] hover:opacity-95"
+                >
+                  شروع رایگان
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
 
-        <MobileNav open={open} onClose={() => setOpen(false)} items={navItems} />
+        <MobileNav open={open} onClose={() => setOpen(false)} items={navItems} isAuthenticated={isAuthenticated} userName={session?.user?.name ?? null} onSignOut={handleSignOut} />
       </div>
     </motion.header>
   );

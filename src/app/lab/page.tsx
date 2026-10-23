@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import { Header } from "@/components/layout/header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { lessonExercises } from "@/content/courses/lessons";
+import { lessonExercises } from "@/content/courses";
 import { useExerciseProgress } from "@/features/progress/hooks";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
@@ -17,22 +17,78 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   loading: () => <div className="p-4 text-xs text-muted-foreground">در حال بارگذاری ادیتور...</div>,
 });
 
-type LabLanguage = "html" | "css" | "javascript";
+type LabMode = "html" | "css" | "javascript" | "htmlcss";
 
-const defaultTemplates = {
-  html: { html: "<h1>سلام کدنوا</h1>\n<p>کد HTML خودت را بنویس.</p>", css: "body { font-family: sans-serif; }" },
-  css: { html: "<div class='card'>نمونه کارت</div>", css: ".card { padding: 16px; border: 1px solid #ddd; }" },
-  javascript: { html: "<h3>JS Playground</h3><p>خروجی را در کنسول ببین.</p>", css: "body { font-family: sans-serif; }", js: "console.log('Hello CodeNova')" },
-};
-
-function storageKey(exerciseSlug: string | null, key: string) {
-  return `codenova:lab:${exerciseSlug ?? "default"}:${key}`;
+interface CodeBuffers {
+  html: string;
+  css: string;
+  js: string;
 }
 
-function buildSrcDoc(language: LabLanguage, htmlCode: string, cssCode: string, jsCode: string) {
-  const safeJs = jsCode.replace(/<\/script>/gi, "<\\/script>");
+const defaultTemplates: Record<LabMode, CodeBuffers> = {
+  html: {
+    html: "<h1>سلام کدنوا</h1>\n<p>کد HTML خودت را بنویس.</p>",
+    css: "body { font-family: sans-serif; }",
+    js: "",
+  },
+  css: {
+    html: "<div class='card'>نمونه کارت</div>",
+    css: ".card { padding: 16px; border: 1px solid #ddd; }",
+    js: "",
+  },
+  javascript: {
+    html: "<h3>JS Playground</h3><p>خروجی را در کنسول ببین.</p>",
+    css: "body { font-family: sans-serif; }",
+    js: "console.log('Hello CodeNova')",
+  },
+  htmlcss: {
+    html: "<div class='card'>\n  <h2>کارت من</h2>\n  <p>با CSS استایلش کن.</p>\n</div>",
+    css: ".card {\n  padding: 16px;\n  border-radius: 12px;\n  border: 1px solid #ddd;\n}",
+    js: "",
+  },
+};
 
-  return `<!doctype html><html><head><meta charset='utf-8'/><style>${cssCode}</style><script>
+function isBrowser() {
+  return typeof window !== "undefined";
+}
+
+function draftKey(scope: string, buffer: keyof CodeBuffers) {
+  return `codenova:lab:${scope}:${buffer}`;
+}
+
+function loadBuffers(scope: string, fallback: CodeBuffers): CodeBuffers {
+  if (!isBrowser()) return fallback;
+  const read = (buffer: keyof CodeBuffers) => {
+    try {
+      return window.localStorage.getItem(draftKey(scope, buffer));
+    } catch {
+      return null;
+    }
+  };
+  return {
+    html: read("html") ?? fallback.html,
+    css: read("css") ?? fallback.css,
+    js: read("js") ?? fallback.js,
+  };
+}
+
+function saveBuffers(scope: string, buffers: CodeBuffers) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(draftKey(scope, "html"), buffers.html);
+    window.localStorage.setItem(draftKey(scope, "css"), buffers.css);
+    window.localStorage.setItem(draftKey(scope, "js"), buffers.js);
+  } catch (error) {
+    console.warn("[lab] could not persist draft:", error);
+  }
+}
+
+function buildSrcDoc(mode: LabMode, buffers: CodeBuffers) {
+  // Escape sequences that would prematurely close the host tags inside srcDoc.
+  const safeCss = buffers.css.replace(/<\/style>/gi, "<\\/style>");
+  const safeJs = buffers.js.replace(/<\/script>/gi, "<\\/script>");
+
+  return `<!doctype html><html><head><meta charset='utf-8'/><style>${safeCss}</style><script>
   (function(){
     const send=(type,payload)=>parent.postMessage({source:'codenova-lab',type,payload},'*');
     const oldLog=console.log;const oldWarn=console.warn;const oldError=console.error;
@@ -41,104 +97,103 @@ function buildSrcDoc(language: LabLanguage, htmlCode: string, cssCode: string, j
     console.error=(...args)=>{send('error-log',args.join(' '));oldError(...args)};
     window.onerror=(message,source,lineno,colno)=>{send('runtime-error',String(message)+' ('+lineno+':'+colno+')')};
   })();
-  </script></head><body>${htmlCode}<script>${language === "javascript" ? safeJs : ""}</script></body></html>`;
+  </script></head><body>${buffers.html}<script>${mode === "javascript" ? safeJs : ""}</script></body></html>`;
 }
 
-function simpleCheck(language: LabLanguage, code: { html: string; css: string; js: string }, hint: string) {
+// Known structural tags across the whole HTML course (text, lists, tables,
+// forms, semantics, media, embeds) so every exercise can pass the check.
+const KNOWN_HTML_TAGS = new Set([
+  "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr", "blockquote", "code", "pre",
+  "strong", "em", "small", "span", "div",
+  "ul", "ol", "li", "dl", "dt", "dd",
+  "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
+  "form", "label", "input", "select", "option", "textarea", "button", "fieldset", "legend",
+  "a", "img",
+  "header", "footer", "nav", "main", "section", "article", "aside", "figure", "figcaption",
+  "audio", "video", "iframe", "source", "track",
+  "meta", "title", "link", "html", "head", "body",
+]);
+
+function simpleCheck(mode: LabMode, buffers: CodeBuffers, hint: string) {
   const lowerHint = hint.toLowerCase();
-  if (language === "html") {
-    const hasH = /<h[1-6][\s>]/i.test(code.html);
-    const hasP = /<p[\s>]/i.test(code.html);
-    return hasH && hasP;
+  if (mode === "html" || mode === "htmlcss") {
+    // Pass when at least two *distinct* meaningful tags are present: lenient
+    // enough for every course exercise (tables, forms, media...) yet not
+    // satisfied by an empty template or one stray tag.
+    const found = new Set<string>();
+    const pattern = /<([a-z][a-z0-9]*)\b/gi;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(buffers.html)) !== null) {
+      const tag = match[1].toLowerCase();
+      if (KNOWN_HTML_TAGS.has(tag)) found.add(tag);
+    }
+    return found.size >= 2;
   }
-  if (language === "css") {
-    return /color|background|display|grid|flex|padding|margin|border/i.test(code.css) || /color|background|display|grid|flex/.test(lowerHint);
+  if (mode === "css") {
+    return /color|background|display|grid|flex|padding|margin|border/i.test(buffers.css) || /color|background|display|grid|flex/.test(lowerHint);
   }
-  return /console\.log|return|if|for|while|function|=>/.test(code.js) && code.js.trim().length > 10;
+  return /console\.log|return|if|for|while|function|=>/.test(buffers.js) && buffers.js.trim().length > 10;
 }
 
-function LabContent() {
-  const searchParams = useSearchParams();
-  const exerciseSlug = searchParams.get("exercise");
-  const foundExercise = lessonExercises.find((item) => item.slug === exerciseSlug) ?? null;
-  const invalidExercise = Boolean(exerciseSlug && !foundExercise);
+const modeLabels: Record<LabMode, string> = {
+  html: "HTML",
+  css: "CSS",
+  javascript: "JavaScript",
+  htmlcss: "HTML+CSS",
+};
 
-  const [selectedLanguage, setSelectedLanguage] = useState<LabLanguage>(foundExercise?.language ?? "html");
+interface LabWorkspaceProps {
+  scope: string;
+  mode: LabMode;
+  exercise: { slug: string; title: string; description: string; expectedHint: string; hint?: string; starterCode: string } | null;
+  theme: "vs-dark" | "light";
+}
 
-  const exerciseProgress = useExerciseProgress(foundExercise?.slug ?? "");
+/**
+ * Initial buffers for a workspace mount: persisted draft (per scope) when
+ * present, otherwise the exercise starter code or the mode default template.
+ * Runs as a lazy useState initializer — once per mount. Switching exercise or
+ * mode remounts the workspace (keyed), which re-reads the right draft.
+ */
+function computeInitialBuffers(scope: string, mode: LabMode, exercise: LabWorkspaceProps["exercise"]): CodeBuffers {
+  if (exercise) {
+    const base = defaultTemplates[mode];
+    const starter: CodeBuffers =
+      mode === "javascript"
+        ? { ...base, js: exercise.starterCode }
+        : mode === "css"
+          ? { ...base, css: exercise.starterCode }
+          : { ...base, html: exercise.starterCode };
+    return loadBuffers(scope, starter);
+  }
+  return loadBuffers(scope, defaultTemplates[mode]);
+}
 
-  const [htmlCode, setHtmlCode] = useState(defaultTemplates.html.html);
-  const [cssCode, setCssCode] = useState(defaultTemplates.html.css);
-  const [jsCode, setJsCode] = useState(defaultTemplates.javascript.js);
-  const [previewDoc, setPreviewDoc] = useState(buildSrcDoc("html", defaultTemplates.html.html, defaultTemplates.html.css, ""));
+function LabWorkspace({ scope, mode, exercise, theme }: LabWorkspaceProps) {
+  const [buffers, setBuffers] = useState<CodeBuffers>(() => computeInitialBuffers(scope, mode, exercise));
+  const [previewDoc, setPreviewDoc] = useState(() => buildSrcDoc(mode, defaultTemplates[mode]));
+  const [iframeKey, setIframeKey] = useState(0);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
   const [consoleLogs, setConsoleLogs] = useState<Array<{ level: "log" | "warn" | "error"; text: string }>>([]);
   const [checkResult, setCheckResult] = useState<"idle" | "pass" | "fail">("idle");
-  const [editorTheme, setEditorTheme] = useState<"vs-dark" | "light">("vs-dark");
-  const [editorVersion, setEditorVersion] = useState(0);
-  const [editorError, setEditorError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string>("");
 
-  const language = foundExercise?.language ?? selectedLanguage;
+  const exerciseProgress = useExerciseProgress(exercise?.slug ?? "");
 
-  useEffect(() => {
-    if (foundExercise) {
-      setSelectedLanguage(foundExercise.language);
-      if (foundExercise.language === "html") {
-        const savedHtml = window.localStorage.getItem(storageKey(foundExercise.slug, "html"));
-        const savedCss = window.localStorage.getItem(storageKey(foundExercise.slug, "css"));
-        setHtmlCode(savedHtml ?? foundExercise.starterCode);
-        setCssCode(savedCss ?? "body { font-family: sans-serif; }\nh1 { color: #2563eb; }");
-        setJsCode("");
-      } else if (foundExercise.language === "css") {
-        const savedCss = window.localStorage.getItem(storageKey(foundExercise.slug, "css"));
-        setHtmlCode(defaultTemplates.css.html);
-        setCssCode(savedCss ?? foundExercise.starterCode);
-        setJsCode("");
-      } else {
-        const savedJs = window.localStorage.getItem(storageKey(foundExercise.slug, "js"));
-        setHtmlCode(defaultTemplates.javascript.html);
-        setCssCode(defaultTemplates.javascript.css);
-        setJsCode(savedJs ?? foundExercise.starterCode);
-      }
-    } else {
-      const key = storageKey(null, selectedLanguage);
-      const saved = window.localStorage.getItem(key);
-      if (selectedLanguage === "html") {
-        setHtmlCode(saved ?? defaultTemplates.html.html);
-        setCssCode(window.localStorage.getItem(storageKey(null, "css")) ?? defaultTemplates.html.css);
-        setJsCode("");
-      } else if (selectedLanguage === "css") {
-        setHtmlCode(defaultTemplates.css.html);
-        setCssCode(saved ?? defaultTemplates.css.css);
-        setJsCode("");
-      } else {
-        setHtmlCode(defaultTemplates.javascript.html);
-        setCssCode(defaultTemplates.javascript.css);
-        setJsCode(saved ?? defaultTemplates.javascript.js);
-      }
-    }
-    setCheckResult("idle");
-  }, [foundExercise, selectedLanguage]);
+  const patch = (part: Partial<CodeBuffers>) => setBuffers((prev) => ({ ...prev, ...part }));
 
+  // Debounced live preview + autosave (500ms). setState happens inside the
+  // timeout callback (async), which is the lint-clean pattern.
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const doc = buildSrcDoc(language, htmlCode, cssCode, jsCode);
-      setPreviewDoc(doc);
-      const now = new Date().toLocaleTimeString("fa-IR");
-      if (foundExercise) {
-        window.localStorage.setItem(storageKey(foundExercise.slug, "html"), htmlCode);
-        window.localStorage.setItem(storageKey(foundExercise.slug, "css"), cssCode);
-        window.localStorage.setItem(storageKey(foundExercise.slug, "js"), jsCode);
-      } else {
-        window.localStorage.setItem(storageKey(null, selectedLanguage), selectedLanguage === "javascript" ? jsCode : selectedLanguage === "css" ? cssCode : htmlCode);
-        window.localStorage.setItem(storageKey(null, "css"), cssCode);
-      }
-      setSavedAt(now);
+      setPreviewDoc(buildSrcDoc(mode, buffers));
+      saveBuffers(scope, buffers);
+      setSavedAt(new Date().toLocaleTimeString("fa-IR"));
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [language, htmlCode, cssCode, jsCode, foundExercise, selectedLanguage]);
+  }, [mode, buffers, scope]);
 
+  // Console/runtime telemetry from the sandboxed iframe.
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const data = event.data;
@@ -160,56 +215,144 @@ function LabContent() {
     return () => window.removeEventListener("message", handler);
   }, []);
 
-  const canMarkSolved = checkResult === "pass";
+  const runNow = () => {
+    setPreviewDoc(buildSrcDoc(mode, buffers));
+    saveBuffers(scope, buffers);
+    setSavedAt(new Date().toLocaleTimeString("fa-IR"));
+    setRuntimeErrors([]);
+    setConsoleLogs([]);
+    setIframeKey((key) => key + 1);
+  };
 
   const resetToStarter = () => {
-    if (foundExercise) {
-      if (foundExercise.language === "javascript") setJsCode(foundExercise.starterCode);
-      if (foundExercise.language === "css") setCssCode(foundExercise.starterCode);
-      if (foundExercise.language === "html") setHtmlCode(foundExercise.starterCode);
-      setCheckResult("idle");
-      return;
-    }
-
-    if (selectedLanguage === "html") {
-      setHtmlCode(defaultTemplates.html.html);
-      setCssCode(defaultTemplates.html.css);
-    } else if (selectedLanguage === "css") {
-      setCssCode(defaultTemplates.css.css);
-      setHtmlCode(defaultTemplates.css.html);
+    let next: CodeBuffers;
+    if (exercise) {
+      const base = defaultTemplates[mode];
+      next =
+        mode === "javascript"
+          ? { ...base, js: exercise.starterCode }
+          : mode === "css"
+            ? { ...base, css: exercise.starterCode }
+            : { ...base, html: exercise.starterCode };
     } else {
-      setJsCode(defaultTemplates.javascript.js);
-      setHtmlCode(defaultTemplates.javascript.html);
-      setCssCode(defaultTemplates.javascript.css);
+      next = defaultTemplates[mode];
     }
+    setBuffers(next);
+    setCheckResult("idle");
   };
 
   const runCheck = () => {
-    if (!foundExercise) {
+    if (!exercise) {
       setCheckResult("idle");
       return;
     }
-    const ok = simpleCheck(language, { html: htmlCode, css: cssCode, js: jsCode }, foundExercise.expectedHint);
-    setCheckResult(ok ? "pass" : "fail");
+    setCheckResult(simpleCheck(mode, buffers, exercise.expectedHint) ? "pass" : "fail");
   };
 
-  const saveNow = () => {
-    const now = new Date().toLocaleTimeString("fa-IR");
-    if (foundExercise) {
-      window.localStorage.setItem(storageKey(foundExercise.slug, "html"), htmlCode);
-      window.localStorage.setItem(storageKey(foundExercise.slug, "css"), cssCode);
-      window.localStorage.setItem(storageKey(foundExercise.slug, "js"), jsCode);
-    } else {
-      window.localStorage.setItem(storageKey(null, selectedLanguage), selectedLanguage === "javascript" ? jsCode : selectedLanguage === "css" ? cssCode : htmlCode);
-    }
-    setSavedAt(now);
-  };
-
-  const editorCommonProps = {
-    theme: editorTheme,
-    options: { minimap: { enabled: false }, fontSize: 13 },
-    onMount: () => setEditorError(null),
+  const editorProps = {
+    theme,
+    options: { minimap: { enabled: false }, fontSize: 13, fontFamily: "var(--font-mono)" },
   } as const;
+
+  const editorBlock = (label: string, language: "html" | "css" | "javascript", value: string, onChange: (v: string) => void, tall: boolean) => (
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
+      <div className="flex items-center justify-between border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">
+        <span dir="ltr">{label}</span>
+      </div>
+      <div className={tall ? "h-[300px] lg:h-[520px]" : "h-[300px] lg:h-[252px]"} dir="ltr">
+        <MonacoEditor language={language} value={value} onChange={(v) => onChange(v ?? "")} {...editorProps} />
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="mt-4 grid gap-4 lg:grid-cols-5">
+        {/* Editor — 60% on desktop (RTL: first grid column is on the right) */}
+        <section className="space-y-4 lg:col-span-3">
+          {mode === "html" || mode === "htmlcss" ? (
+            mode === "htmlcss" ? (
+              <>
+                {editorBlock("HTML", "html", buffers.html, (v) => patch({ html: v }), false)}
+                {editorBlock("CSS", "css", buffers.css, (v) => patch({ css: v }), false)}
+              </>
+            ) : (
+              editorBlock("HTML", "html", buffers.html, (v) => patch({ html: v }), true)
+            )
+          ) : null}
+          {mode === "css" ? editorBlock("CSS", "css", buffers.css, (v) => patch({ css: v }), true) : null}
+          {mode === "javascript" ? editorBlock("JavaScript", "javascript", buffers.js, (v) => patch({ js: v }), true) : null}
+        </section>
+
+        {/* Preview + console — 40% on desktop */}
+        <section className="space-y-4 lg:col-span-2">
+          <div className="overflow-hidden rounded-xl border border-white/10 bg-white">
+            <div className="flex items-center justify-between border-b border-slate-300 bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700" dir="ltr">
+              <span>Preview</span>
+              <Button size="sm" variant="outline" onClick={runNow}>اجرا</Button>
+            </div>
+            <iframe key={iframeKey} title="preview" className="h-[300px] w-full" sandbox="allow-scripts" srcDoc={previewDoc} />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
+            <div className="flex items-center justify-between border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">
+              <span>خطاهای Runtime</span>
+              <Button size="sm" variant="ghost" onClick={() => setRuntimeErrors([])} aria-label="پاک کردن خطاها">پاک کردن</Button>
+            </div>
+            <div className="max-h-28 overflow-auto p-3 text-xs text-error" dir="ltr">
+              {runtimeErrors.length > 0 ? runtimeErrors.map((e, i) => <p key={`${e}-${i}`}>{e}</p>) : <p dir="rtl">هیچ خطایی نیست.</p>}
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+            <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-sm font-bold text-slate-200">
+              <span dir="ltr">Console</span>
+              <Button size="sm" variant="ghost" onClick={() => setConsoleLogs([])} aria-label="پاک کردن کنسول">پاک کردن</Button>
+            </div>
+            <div className="max-h-36 overflow-auto p-3 text-xs code-ltr">
+              {consoleLogs.length > 0 ? (
+                consoleLogs.map((item, i) => (
+                  <p key={`${item.text}-${i}`} className={item.level === "error" ? "text-red-400" : item.level === "warn" ? "text-yellow-300" : "text-slate-100"}>
+                    {item.text}
+                  </p>
+                ))
+              ) : (
+                <p className="text-slate-400" dir="rtl">هیچ پیامی ثبت نشده است.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button variant="outline" onClick={resetToStarter}>بازنشانی به کد اولیه</Button>
+        <Button variant="outline" onClick={runNow}>اجرای فوری</Button>
+        <Button onClick={runCheck} disabled={!exercise}>بررسی</Button>
+        {exercise ? (
+          <Button disabled={checkResult !== "pass" || exerciseProgress.completed} onClick={exerciseProgress.markComplete}>
+            {exerciseProgress.completed ? "تمرین قبلاً ثبت شده" : "این تمرین را حل کردم"}
+          </Button>
+        ) : null}
+        {savedAt ? <span className="text-xs text-muted-foreground">آخرین ذخیره: {savedAt}</span> : null}
+      </div>
+
+      {checkResult === "pass" ? <p className="mt-2 text-sm text-success">بررسی ساده موفق بود ✅</p> : null}
+      {checkResult === "fail" ? <p className="mt-2 text-sm text-error">بررسی ساده رد شد. کد را با راهنما تطبیق بده.</p> : null}
+    </>
+  );
+}
+
+function LabContent() {
+  const searchParams = useSearchParams();
+  const exerciseSlug = searchParams.get("exercise");
+  const foundExercise = lessonExercises.find((item) => item.slug === exerciseSlug) ?? null;
+  const invalidExercise = Boolean(exerciseSlug && !foundExercise);
+
+  const [freeMode, setFreeMode] = useState<LabMode>("htmlcss");
+  const [theme, setTheme] = useState<"vs-dark" | "light">("vs-dark");
+
+  const mode: LabMode = foundExercise ? (foundExercise.language as LabMode) : freeMode;
+  const scope = foundExercise ? foundExercise.slug : "default";
 
   return (
     <>
@@ -236,18 +379,19 @@ function LabContent() {
               <p className="text-sm font-semibold">{foundExercise.title}</p>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">{foundExercise.description}</p>
-            <p className="mt-2 text-xs text-info">راهنما: {foundExercise.expectedHint}</p>
+            <p className="mt-2 text-xs text-info">خروجی مورد انتظار: {foundExercise.expectedHint}</p>
+            {foundExercise.hint ? <p className="mt-1 text-xs text-warning">راهنمایی (نه جواب کامل): {foundExercise.hint}</p> : null}
           </div>
-        ) : null}
-
-        {!foundExercise ? (
+        ) : (
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button size="sm" variant={selectedLanguage === "html" ? "primary" : "outline"} onClick={() => setSelectedLanguage("html")} aria-label="انتخاب HTML">HTML</Button>
-            <Button size="sm" variant={selectedLanguage === "css" ? "primary" : "outline"} onClick={() => setSelectedLanguage("css")} aria-label="انتخاب CSS">CSS</Button>
-            <Button size="sm" variant={selectedLanguage === "javascript" ? "primary" : "outline"} onClick={() => setSelectedLanguage("javascript")} aria-label="انتخاب JavaScript">JavaScript</Button>
+            {(Object.keys(modeLabels) as LabMode[]).map((item) => (
+              <Button key={item} size="sm" variant={freeMode === item ? "primary" : "outline"} onClick={() => setFreeMode(item)} aria-label={`انتخاب ${modeLabels[item]}`}>
+                {modeLabels[item]}
+              </Button>
+            ))}
             <select
-              value={editorTheme}
-              onChange={(e) => setEditorTheme(e.target.value as "vs-dark" | "light")}
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as "vs-dark" | "light")}
               className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-xs"
               aria-label="تم ادیتور"
             >
@@ -255,123 +399,28 @@ function LabContent() {
               <option value="light">light</option>
             </select>
           </div>
+        )}
+
+        {!invalidExercise ? (
+          <LabWorkspace
+            key={`${scope}|${mode}`}
+            scope={scope}
+            mode={mode}
+            theme={theme}
+            exercise={
+              foundExercise
+                ? {
+                    slug: foundExercise.slug,
+                    title: foundExercise.title,
+                    description: foundExercise.description,
+                    expectedHint: foundExercise.expectedHint,
+                    hint: foundExercise.hint,
+                    starterCode: foundExercise.starterCode,
+                  }
+                : null
+            }
+          />
         ) : null}
-
-        {editorError ? (
-          <Alert variant="error" className="mt-4">
-            خطا در بارگذاری ادیتور Monaco. <Button size="sm" variant="outline" onClick={() => setEditorVersion((v) => v + 1)}>تلاش مجدد</Button>
-          </Alert>
-        ) : null}
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <section className="space-y-4">
-            {language === "html" ? (
-              <>
-                <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
-                  <div className="border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">HTML Editor</div>
-                  <div className="h-56" dir="ltr">
-                    <MonacoEditor
-                      key={`html-${editorVersion}`}
-                      language="html"
-                      value={htmlCode}
-                      onChange={(v) => setHtmlCode(v ?? "")}
-                      {...editorCommonProps}
-                      onValidate={() => setEditorError(null)}
-                    />
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
-                  <div className="border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">CSS Editor</div>
-                  <div className="h-56" dir="ltr">
-                    <MonacoEditor
-                      key={`css-${editorVersion}`}
-                      language="css"
-                      value={cssCode}
-                      onChange={(v) => setCssCode(v ?? "")}
-                      {...editorCommonProps}
-                      onValidate={() => setEditorError(null)}
-                    />
-                  </div>
-                </div>
-              </>
-            ) : language === "css" ? (
-              <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
-                <div className="border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">CSS Editor</div>
-                <div className="h-[470px]" dir="ltr">
-                  <MonacoEditor
-                    key={`css-only-${editorVersion}`}
-                    language="css"
-                    value={cssCode}
-                    onChange={(v) => setCssCode(v ?? "")}
-                    {...editorCommonProps}
-                    onValidate={() => setEditorError(null)}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
-                <div className="border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">JavaScript Editor</div>
-                <div className="h-[470px]" dir="ltr">
-                  <MonacoEditor
-                    key={`js-${editorVersion}`}
-                    language="javascript"
-                    value={jsCode}
-                    onChange={(v) => setJsCode(v ?? "")}
-                    {...editorCommonProps}
-                    onValidate={() => setEditorError(null)}
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-4">
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-white">
-              <div className="border-b border-slate-300 bg-slate-100 px-3 py-2 text-left text-sm font-bold text-slate-700" dir="ltr">Preview</div>
-              <iframe title="preview" className="h-[260px] w-full" sandbox="allow-scripts" srcDoc={previewDoc} />
-            </div>
-
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-surface">
-              <div className="border-b border-white/10 bg-surface-elevated px-3 py-2 text-sm font-bold">خطاهای Runtime</div>
-              <div className="max-h-28 overflow-auto p-3 text-xs text-error">
-                {runtimeErrors.length > 0 ? runtimeErrors.map((e, i) => <p key={`${e}-${i}`}>{e}</p>) : <p>هیچ خطایی نیست.</p>}
-              </div>
-            </div>
-
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-950">
-              <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-sm font-bold text-slate-200">
-                <span>Console</span>
-                <Button size="sm" variant="ghost" onClick={() => setConsoleLogs([])} aria-label="پاک کردن کنسول">پاک کردن</Button>
-              </div>
-              <div className="max-h-36 overflow-auto p-3 text-xs code-ltr">
-                {consoleLogs.length > 0 ? (
-                  consoleLogs.map((item, i) => (
-                    <p key={`${item.text}-${i}`} className={item.level === "error" ? "text-red-400" : item.level === "warn" ? "text-yellow-300" : "text-slate-100"}>
-                      {item.text}
-                    </p>
-                  ))
-                ) : (
-                  <p className="text-slate-400">هیچ پیامی ثبت نشده است.</p>
-                )}
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={resetToStarter}>بازنشانی به کد اولیه</Button>
-          <Button variant="outline" onClick={saveNow}>ذخیره</Button>
-          <Button onClick={runCheck} disabled={!foundExercise}>بررسی</Button>
-          {foundExercise ? (
-            <Button disabled={!canMarkSolved || exerciseProgress.completed} onClick={exerciseProgress.markComplete}>
-              {exerciseProgress.completed ? "تمرین قبلاً ثبت شده" : "این تمرین را حل کردم"}
-            </Button>
-          ) : null}
-          {savedAt ? <span className="text-xs text-muted-foreground">آخرین ذخیره: {savedAt}</span> : null}
-        </div>
-
-        {checkResult === "pass" ? <p className="mt-2 text-sm text-success">بررسی ساده موفق بود ✅</p> : null}
-        {checkResult === "fail" ? <p className="mt-2 text-sm text-error">بررسی ساده رد شد. کد را با راهنما تطبیق بده.</p> : null}
       </motion.main>
     </>
   );

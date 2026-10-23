@@ -5,11 +5,12 @@ export const courses: Course[] = [
     id: "c1",
     slug: "html-basics",
     title: "HTML از صفر",
-    description: "ساختار صفحات وب را با HTML یاد بگیر.",
+    description:
+      "دوره کامل HTML برای کسی که هیچ آشنایی با برنامه‌نویسی ندارد: ۱۲ درس از تگ‌ها و ساختار صفحه تا فرم‌ها، رسانه، سئو و دسترس‌پذیری — با مثال کد کامنت‌شده، اشتباهات رایج و دو تمرین در هر درس.",
     language: "html",
     level: "beginner",
-    lessonCount: 8,
-    durationMinutes: 130,
+    lessonCount: 12,
+    durationMinutes: 185,
     published: true,
   },
   {

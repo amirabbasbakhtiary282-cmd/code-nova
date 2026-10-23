@@ -13,9 +13,10 @@ function isBrowser() {
   return typeof window !== "undefined";
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
+// Local-day helper lives in @/lib/dates (shared with the server data layer);
+// re-exported here so existing client imports keep working.
+import { localDayISO } from "@/lib/dates";
+export { localDayISO };
 
 function emitProgressChange() {
   if (!isBrowser()) return;
@@ -43,22 +44,60 @@ function sanitizeProgress(raw: unknown): UserProgress {
   };
 }
 
+/**
+ * Snapshot cache — REQUIRED by `useSyncExternalStore`.
+ * React calls getSnapshot repeatedly and compares references; returning a
+ * fresh object each time (e.g. from JSON.parse) causes an infinite
+ * re-render loop ("The result of getSnapshot should be cached").
+ * We only re-parse when the raw stored string actually changed.
+ */
+let cachedRaw: string | null = null;
+let cachedSnapshot: UserProgress = defaultProgress;
+
 export function getProgress(): UserProgress {
   if (!isBrowser()) return defaultProgress;
 
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return defaultProgress;
-
+  let raw: string | null;
   try {
-    return sanitizeProgress(JSON.parse(raw));
-  } catch {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("[progress] localStorage is not readable:", error);
     return defaultProgress;
   }
+
+  if (raw === null) {
+    cachedRaw = null;
+    cachedSnapshot = defaultProgress;
+    return defaultProgress;
+  }
+
+  if (raw === cachedRaw) return cachedSnapshot;
+
+  let parsed: UserProgress;
+  try {
+    parsed = sanitizeProgress(JSON.parse(raw));
+  } catch (error) {
+    console.warn("[progress] stored progress is corrupt, resetting:", error);
+    parsed = defaultProgress;
+  }
+
+  cachedRaw = raw;
+  cachedSnapshot = parsed;
+  return parsed;
 }
 
 function saveProgress(next: UserProgress) {
   if (!isBrowser()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const raw = JSON.stringify(next);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, raw);
+  } catch (error) {
+    // Safari private mode / quota errors must not freeze the UI, but we
+    // surface them instead of hiding them.
+    console.warn("[progress] could not persist to localStorage:", error);
+  }
+  cachedRaw = raw;
+  cachedSnapshot = next;
   emitProgressChange();
 }
 
@@ -67,7 +106,11 @@ export function subscribeProgress(callback: () => void) {
 
   const handler = () => callback();
   const storageHandler = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY) callback();
+    if (event.key === STORAGE_KEY) {
+      // Another tab changed the store — drop the cache so getProgress re-parses.
+      cachedRaw = null;
+      callback();
+    }
   };
 
   window.addEventListener(PROGRESS_EVENT, handler);
@@ -83,7 +126,7 @@ export function markLessonComplete(courseSlug: string, lessonSlug: string) {
   const current = getProgress();
   const key = `${courseSlug}:${lessonSlug}`;
   const now = new Date().toISOString();
-  const day = todayISO();
+  const day = localDayISO();
   const safeDays = Array.isArray(current.learningDays) ? current.learningDays : [];
 
   const next: UserProgress = {
@@ -102,7 +145,7 @@ export function markLessonComplete(courseSlug: string, lessonSlug: string) {
 export function markExerciseComplete(exerciseSlug: string) {
   const current = getProgress();
   const now = new Date().toISOString();
-  const day = todayISO();
+  const day = localDayISO();
   const safeDays = Array.isArray(current.learningDays) ? current.learningDays : [];
 
   const next: UserProgress = {
@@ -113,6 +156,48 @@ export function markExerciseComplete(exerciseSlug: string) {
     },
     learningDays: safeDays.includes(day) ? safeDays : [...safeDays, day],
     updatedAt: now,
+  };
+
+  saveProgress(next);
+}
+
+/**
+ * Merge a remote (server/DB) progress snapshot into the local store.
+ * Union semantics: a lesson/exercise is completed if either side says so;
+ * the earliest completedAt wins. Used when a logged-in user's DB progress
+ * is hydrated into the client store.
+ */
+export function mergeProgress(remote: UserProgress) {
+  if (!isBrowser()) return;
+  const local = getProgress();
+
+  const lessons: Record<string, LessonProgress> = { ...local.lessons };
+  for (const [key, item] of Object.entries(remote.lessons ?? {})) {
+    const existing = lessons[key];
+    if (!existing?.completed) {
+      lessons[key] = { ...item, completed: true };
+    } else if (item.completedAt && existing.completedAt && item.completedAt < existing.completedAt) {
+      lessons[key] = { ...existing, completedAt: item.completedAt };
+    }
+  }
+
+  const exercises: UserProgress["exercises"] = { ...local.exercises };
+  for (const [key, item] of Object.entries(remote.exercises ?? {})) {
+    const existing = exercises[key];
+    if (!existing?.completed) {
+      exercises[key] = { ...item, completed: true };
+    } else if (item.completedAt && existing.completedAt && item.completedAt < existing.completedAt) {
+      exercises[key] = { ...existing, completedAt: item.completedAt };
+    }
+  }
+
+  const learningDays = Array.from(new Set([...(local.learningDays ?? []), ...(remote.learningDays ?? [])])).sort();
+
+  const next: UserProgress = {
+    lessons,
+    exercises,
+    learningDays,
+    updatedAt: new Date().toISOString(),
   };
 
   saveProgress(next);

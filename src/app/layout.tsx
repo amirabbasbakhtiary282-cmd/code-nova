@@ -1,34 +1,34 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Vazirmatn } from "next/font/google";
 import type { ReactNode } from "react";
+import { Providers } from "@/components/providers";
 import { ScrollProgress } from "@/components/ui/scroll-progress";
 import "./globals.css";
 
-const vazirmatn = Vazirmatn({
-  subsets: ["arabic"],
-  weight: ["400", "500", "700", "800"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
-  display: "swap",
-});
+// Fonts are self-hosted from /public/fonts (copied from @fontsource packages
+// by scripts/copy-fonts.mjs and declared with @font-face in globals.css).
+// This keeps builds working in offline/restricted networks where
+// fonts.googleapis.com is unreachable.
 
 export const metadata: Metadata = {
-  title: "کدنوا | یادگیری برنامه‌نویسی به فارسی",
+  title: {
+    default: "کدنوا | یادگیری برنامه‌نویسی به فارسی",
+    template: "%s | کدنوا",
+  },
   description: "پلتفرم تعاملی یادگیری برنامه‌نویسی برای فارسی‌زبانان",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="fa" dir="rtl" className={`${vazirmatn.variable} ${jetbrainsMono.variable}`}>
+    <html lang="fa" dir="rtl">
+      <head>
+        <link rel="preload" href="/fonts/vazirmatn-arabic-400.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/vazirmatn-latin-400.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+      </head>
       <body className="bg-background text-foreground antialiased [font-family:var(--font-sans)]">
-        <ScrollProgress />
-        {children}
+        <Providers>
+          <ScrollProgress />
+          {children}
+        </Providers>
       </body>
     </html>
   );
