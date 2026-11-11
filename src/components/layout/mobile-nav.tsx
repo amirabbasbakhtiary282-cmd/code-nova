@@ -9,9 +9,12 @@ interface MobileNavProps {
   open: boolean;
   onClose: () => void;
   items: Array<{ href: string; label: string }>;
+  isAuthenticated: boolean;
+  userName: string | null;
+  onSignOut: () => void;
 }
 
-export function MobileNav({ open, onClose, items }: MobileNavProps) {
+export function MobileNav({ open, onClose, items, isAuthenticated, userName, onSignOut }: MobileNavProps) {
   return (
     <AnimatePresence>
       {open ? (
@@ -53,14 +56,30 @@ export function MobileNav({ open, onClose, items }: MobileNavProps) {
             </nav>
 
             <div className="mt-6 grid gap-2">
-              <Link href="/login" onClick={onClose}>
-                <Button variant="ghost" className="w-full">
-                  ورود
-                </Button>
-              </Link>
-              <Link href="/register" onClick={onClose}>
-                <Button className="w-full">شروع رایگان</Button>
-              </Link>
+              {isAuthenticated ? (
+                <>
+                  <p className="px-3 text-xs text-muted-foreground">وارد شده به عنوان {userName ?? "کاربر"}</p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      onClose();
+                      onSignOut();
+                    }}
+                  >
+                    خروج
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Link href="/login" onClick={onClose}>
+                    <Button variant="ghost" className="w-full">ورود</Button>
+                  </Link>
+                  <Link href="/register" onClick={onClose}>
+                    <Button className="w-full">شروع رایگان</Button>
+                  </Link>
+                </>
+              )}
             </div>
           </motion.aside>
         </div>

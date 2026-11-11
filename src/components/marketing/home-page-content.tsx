@@ -9,6 +9,7 @@ import { AnimatedCounter } from "@/components/ui/animated-counter";
 import { GlowButton } from "@/components/ui/glow-button";
 import { Reveal } from "@/components/ui/reveal";
 import { courses } from "@/content/courses/courses";
+import { lessonExercises, lessonsByCourse } from "@/content/courses";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -21,31 +22,40 @@ const heroFrames = [
   "<ul><li>درس</li><li>تمرین</li><li>پیشرفت</li></ul>",
 ];
 
+/**
+ * Typewriter for one hero frame. Mounted with `key={text}` so each frame gets
+ * a fresh component — the reset happens via remount instead of a synchronous
+ * setState inside an effect (react-hooks/set-state-in-effect).
+ */
+function Typewriter({ text }: { text: string }) {
+  const [typed, setTyped] = useState("");
+
+  useEffect(() => {
+    let idx = 0;
+    const typeTimer = window.setInterval(() => {
+      idx += 1;
+      setTyped(text.slice(0, idx));
+      if (idx >= text.length) window.clearInterval(typeTimer);
+    }, 18);
+    return () => window.clearInterval(typeTimer);
+  }, [text]);
+
+  return <pre className="whitespace-pre-wrap">{typed}</pre>;
+}
+
 export function HomePageContent() {
   const [frameIndex, setFrameIndex] = useState(0);
-  const [typed, setTyped] = useState("");
   const [labCode, setLabCode] = useState("<h2>CodeNova Lab</h2>\n<p>اینجا کد خودت را تست کن.</p>");
   const [labPreview, setLabPreview] = useState(labCode);
 
   const activeFrame = heroFrames[frameIndex];
 
+  // Rotate hero frames; the typing reset is handled by <Typewriter key=...>.
   useEffect(() => {
-    let idx = 0;
-    setTyped("");
-    const typeTimer = window.setInterval(() => {
-      idx += 1;
-      setTyped(activeFrame.slice(0, idx));
-      if (idx >= activeFrame.length) window.clearInterval(typeTimer);
-    }, 18);
-
     const rotateTimer = window.setTimeout(() => {
       setFrameIndex((prev) => (prev + 1) % heroFrames.length);
     }, 3400);
-
-    return () => {
-      window.clearInterval(typeTimer);
-      window.clearTimeout(rotateTimer);
-    };
+    return () => window.clearTimeout(rotateTimer);
   }, [activeFrame]);
 
   useEffect(() => {
@@ -61,10 +71,12 @@ export function HomePageContent() {
     [activeFrame],
   );
 
+  // Real numbers derived from content — no inflated mock claims.
+  const totalLessons = Object.values(lessonsByCourse).reduce((sum, list) => sum + list.length, 0);
   const statCards = [
-    { title: "درس واقعی", value: 24, suffix: "", icon: BookOpen, grad: "from-[#8B5CF6] to-[#3B82F6]" },
-    { title: "دوره کامل", value: 3, suffix: "", icon: Workflow, grad: "from-[#3B82F6] to-[#10B981]" },
-    { title: "تمرین", value: 100, suffix: "+", icon: Code2, grad: "from-[#EC4899] to-[#8B5CF6]" },
+    { title: "درس واقعی", value: totalLessons, suffix: "", icon: BookOpen, grad: "from-[#8B5CF6] to-[#3B82F6]" },
+    { title: "دوره کامل", value: courses.length, suffix: "", icon: Workflow, grad: "from-[#3B82F6] to-[#10B981]" },
+    { title: "تمرین", value: lessonExercises.length, suffix: "+", icon: Code2, grad: "from-[#EC4899] to-[#8B5CF6]" },
     { title: "دسترسی", value: 24, suffix: "/7", icon: Clock3, grad: "from-[#EC4899] to-[#F97316]" },
   ] as const;
 
@@ -110,7 +122,7 @@ export function HomePageContent() {
               <div className="rounded-[24px] border border-white/10 bg-white/5 p-4 backdrop-blur-2xl">
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-white/10 bg-[#0A0A1A] p-3 text-xs text-emerald-300 code-ltr min-h-[170px]">
-                    <pre className="whitespace-pre-wrap">{typed}</pre>
+                    <Typewriter key={activeFrame} text={activeFrame} />
                   </div>
                   <div className="overflow-hidden rounded-2xl border border-white/10 bg-white">
                     <div className="border-b border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-600" dir="ltr">Live Preview</div>

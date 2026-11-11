@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { CourseDetailClient } from "@/components/learning/course-detail-client";
 import { courses } from "@/content/courses/courses";
-import { lessonsByCourse } from "@/content/courses/lessons";
+import { lessonsByCourse } from "@/content/courses";
 
 export default async function CourseDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;

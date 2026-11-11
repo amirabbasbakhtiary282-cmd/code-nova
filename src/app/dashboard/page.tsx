@@ -7,18 +7,26 @@ import { AnimatedCounter } from "@/components/ui/animated-counter";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { lessonExercises, lessonsByCourse } from "@/content/courses/lessons";
+import { lessonExercises, lessonsByCourse } from "@/content/courses";
 import { useUserProgress } from "@/features/progress/hooks";
+import { localDayISO } from "@/features/progress/storage";
 
+/**
+ * Consecutive-day streak in LOCAL time.
+ * If the user hasn't studied "today" yet, the streak is still counted from
+ * yesterday (grace period) so it doesn't reset in the morning.
+ */
 function calcStreak(days: string[]) {
   if (days.length === 0) return 0;
   const set = new Set(days);
-  let streak = 0;
   const cursor = new Date();
 
-  while (true) {
-    const day = cursor.toISOString().slice(0, 10);
-    if (!set.has(day)) break;
+  if (!set.has(localDayISO(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  let streak = 0;
+  while (set.has(localDayISO(cursor))) {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
@@ -42,7 +50,10 @@ export default function DashboardPage() {
 
   const nextByCourse = Object.entries(lessonsByCourse)
     .map(([courseSlug, lessons]) => {
-      const pending = lessons.find((lesson) => !progress.lessons[`${courseSlug}:${lesson.slug}`]?.completed);
+      const pending = lessons
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .find((lesson) => !progress.lessons[`${courseSlug}:${lesson.slug}`]?.completed);
       return pending ? { ...pending, courseSlug } : null;
     })
     .filter(Boolean) as Array<{ courseSlug: string; slug: string; title: string }>;

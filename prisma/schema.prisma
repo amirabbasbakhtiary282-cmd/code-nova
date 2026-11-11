@@ -1,0 +1,187 @@
+// Production data model — Prisma ORM 7 + MySQL (MariaDB driver adapter).
+//
+// This is the production path requested in the spec. The live dev/preview
+// database in this repository is SQLite (src/db/schema.ts + Drizzle) because
+// the sandbox cannot run a MySQL server or download Prisma engines
+// (binaries.prisma.sh is blocked). The logical models below mirror the SQLite
+// schema 1:1 and both are consumed through the same repository interfaces
+// (src/server/repositories/types.ts).
+//
+// Switch guide: prisma/README.md
+// Reference implementation: prisma/reference/prisma-repositories.ts
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(120)
+  email        String   @unique @db.VarChar(190)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  roles          UserRole[]
+  enrollments    Enrollment[]
+  lessonProgress LessonProgress[]
+  submissions    Submission[]
+  quizAttempts   QuizAttempt[]
+  auditLogs      AuditLog[]
+
+  @@map("users")
+}
+
+model UserRole {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  role      String   @default("learner") @db.VarChar(30) // learner | mentor | admin
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@map("user_roles")
+}
+
+model Course {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique @db.VarChar(120)
+  title       String   @db.VarChar(190)
+  description String   @db.Text
+  language    String   @db.VarChar(40)
+  level       String   @db.VarChar(30)
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lessons     Lesson[]
+  exercises   Exercise[]
+  enrollments Enrollment[]
+
+  @@map("courses")
+}
+
+model Lesson {
+  id              Int    @id @default(autoincrement())
+  courseId        Int    @map("course_id")
+  slug            String @db.VarChar(120)
+  title           String @db.VarChar(190)
+  order           Int    @map("order_index")
+  durationMinutes Int    @map("duration_minutes")
+  content         String @db.Text
+  codeExample     String @map("code_example") @db.Text // JSON: {language, code, outputPreview?}
+  keyPoints       String @map("key_points") @db.Text // JSON: string[]
+  exercise        String @db.Text // JSON: {title, description, starterCode, expectedHint}
+
+  course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  exercises      Exercise[]
+  lessonProgress LessonProgress[]
+  quizAttempts   QuizAttempt[]
+
+  @@unique([courseId, slug])
+  @@index([courseId])
+  @@map("lessons")
+}
+
+model Exercise {
+  id           Int     @id @default(autoincrement())
+  courseId     Int     @map("course_id")
+  lessonId     Int?    @map("lesson_id")
+  slug         String  @unique @db.VarChar(190)
+  title        String  @db.VarChar(190)
+  description  String  @db.Text
+  language     String  @db.VarChar(40)
+  level        String  @db.VarChar(30)
+  starterCode  String  @map("starter_code") @db.Text
+  expectedHint String  @map("expected_hint") @db.Text
+
+  course      Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson      Lesson?       @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  submissions Submission[]
+
+  @@index([courseId])
+  @@index([lessonId])
+  @@map("exercises")
+}
+
+model Enrollment {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  courseId   Int      @map("course_id")
+  enrolledAt DateTime @default(now()) @map("enrolled_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@map("enrollments")
+}
+
+model LessonProgress {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  lessonId    Int      @map("lesson_id")
+  courseSlug  String   @map("course_slug") @db.VarChar(120)
+  lessonSlug  String   @map("lesson_slug") @db.VarChar(120)
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@map("lesson_progress")
+}
+
+model Submission {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  exerciseId   Int      @map("exercise_id")
+  exerciseSlug String   @map("exercise_slug") @db.VarChar(190)
+  code         String   @db.MediumText // JSON of editor buffers at solve time
+  status       String   @default("pass") @db.VarChar(20) // pass | fail | saved
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exerciseId])
+  @@index([userId])
+  @@map("submissions")
+}
+
+model QuizAttempt {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  lessonId  Int      @map("lesson_id")
+  score     Int
+  total     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@map("quiz_attempts")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  action    String   @db.VarChar(120)
+  meta      String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}

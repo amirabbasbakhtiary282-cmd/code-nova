@@ -16,8 +16,22 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 
+# self-hosted fonts (copied from node_modules by scripts/copy-fonts.mjs)
+public/fonts/
+
+# local dev database (SQLite)
+data/
+*.db
+*.db-journal
+
 # misc
 .DS_Store
 coverage/
 playwright-report/
 test-results/
+
+# typescript incremental build info
+*.tsbuildinfo
+
+# generated Prisma client (production path)
+/generated/
