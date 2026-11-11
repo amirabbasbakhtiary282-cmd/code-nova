@@ -3,6 +3,7 @@
 import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
 import { registerUser, RegistrationError } from "@/server/services/auth-service";
+import { safeCallbackPath } from "@/lib/redirects";
 
 export interface AuthFormState {
   error?: string;
@@ -11,7 +12,7 @@ export interface AuthFormState {
 export async function loginAction(_prev: AuthFormState, formData: FormData): Promise<AuthFormState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  const callbackUrl = String(formData.get("callbackUrl") ?? "/dashboard");
+  const callbackUrl = safeCallbackPath(String(formData.get("callbackUrl") ?? "/dashboard"));
 
   if (!email || !password) {
     return { error: "ایمیل و رمز عبور الزامی است." };

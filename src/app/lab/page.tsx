@@ -11,19 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { lessonExercises } from "@/content/courses";
 import { useExerciseProgress } from "@/features/progress/hooks";
+import { simpleCheck, type CodeBuffers, type LabMode } from "@/features/lab/exercise-check";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => <div className="p-4 text-xs text-muted-foreground">در حال بارگذاری ادیتور...</div>,
 });
-
-type LabMode = "html" | "css" | "javascript" | "htmlcss";
-
-interface CodeBuffers {
-  html: string;
-  css: string;
-  js: string;
-}
 
 const defaultTemplates: Record<LabMode, CodeBuffers> = {
   html: {
@@ -100,41 +93,6 @@ function buildSrcDoc(mode: LabMode, buffers: CodeBuffers) {
   </script></head><body>${buffers.html}<script>${mode === "javascript" ? safeJs : ""}</script></body></html>`;
 }
 
-// Known structural tags across the whole HTML course (text, lists, tables,
-// forms, semantics, media, embeds) so every exercise can pass the check.
-const KNOWN_HTML_TAGS = new Set([
-  "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr", "blockquote", "code", "pre",
-  "strong", "em", "small", "span", "div",
-  "ul", "ol", "li", "dl", "dt", "dd",
-  "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
-  "form", "label", "input", "select", "option", "textarea", "button", "fieldset", "legend",
-  "a", "img",
-  "header", "footer", "nav", "main", "section", "article", "aside", "figure", "figcaption",
-  "audio", "video", "iframe", "source", "track",
-  "meta", "title", "link", "html", "head", "body",
-]);
-
-function simpleCheck(mode: LabMode, buffers: CodeBuffers, hint: string) {
-  const lowerHint = hint.toLowerCase();
-  if (mode === "html" || mode === "htmlcss") {
-    // Pass when at least two *distinct* meaningful tags are present: lenient
-    // enough for every course exercise (tables, forms, media...) yet not
-    // satisfied by an empty template or one stray tag.
-    const found = new Set<string>();
-    const pattern = /<([a-z][a-z0-9]*)\b/gi;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(buffers.html)) !== null) {
-      const tag = match[1].toLowerCase();
-      if (KNOWN_HTML_TAGS.has(tag)) found.add(tag);
-    }
-    return found.size >= 2;
-  }
-  if (mode === "css") {
-    return /color|background|display|grid|flex|padding|margin|border/i.test(buffers.css) || /color|background|display|grid|flex/.test(lowerHint);
-  }
-  return /console\.log|return|if|for|while|function|=>/.test(buffers.js) && buffers.js.trim().length > 10;
-}
-
 const modeLabels: Record<LabMode, string> = {
   html: "HTML",
   css: "CSS",
@@ -180,7 +138,11 @@ function LabWorkspace({ scope, mode, exercise, theme }: LabWorkspaceProps) {
 
   const exerciseProgress = useExerciseProgress(exercise?.slug ?? "");
 
-  const patch = (part: Partial<CodeBuffers>) => setBuffers((prev) => ({ ...prev, ...part }));
+  const patch = (part: Partial<CodeBuffers>) => {
+    setBuffers((prev) => ({ ...prev, ...part }));
+    // A previous passing result is valid only for the code that was checked.
+    setCheckResult("idle");
+  };
 
   // Debounced live preview + autosave (500ms). setState happens inside the
   // timeout callback (async), which is the lint-clean pattern.
@@ -246,7 +208,7 @@ function LabWorkspace({ scope, mode, exercise, theme }: LabWorkspaceProps) {
       setCheckResult("idle");
       return;
     }
-    setCheckResult(simpleCheck(mode, buffers, exercise.expectedHint) ? "pass" : "fail");
+    setCheckResult(simpleCheck(mode, buffers, exercise.starterCode, exercise.slug) ? "pass" : "fail");
   };
 
   const editorProps = {
@@ -329,7 +291,10 @@ function LabWorkspace({ scope, mode, exercise, theme }: LabWorkspaceProps) {
         <Button variant="outline" onClick={runNow}>اجرای فوری</Button>
         <Button onClick={runCheck} disabled={!exercise}>بررسی</Button>
         {exercise ? (
-          <Button disabled={checkResult !== "pass" || exerciseProgress.completed} onClick={exerciseProgress.markComplete}>
+          <Button
+            disabled={checkResult !== "pass" || exerciseProgress.completed}
+            onClick={() => exerciseProgress.markComplete(JSON.stringify(buffers))}
+          >
             {exerciseProgress.completed ? "تمرین قبلاً ثبت شده" : "این تمرین را حل کردم"}
           </Button>
         ) : null}

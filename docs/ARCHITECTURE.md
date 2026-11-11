@@ -12,12 +12,13 @@
 - **لایه داده پشت اینترفیس repository**: UI/اکشن‌ها/روت‌ها فقط
   `src/server/repositories/types.ts` را می‌شناسند؛ درایور (SQLite امروز،
   Prisma/MySQL در تولید) پشت `getRepositories()` عوض می‌شود.
-- **پیشرفت local-first**: مهمان‌ها روی localStorage؛ کاربران لاگین‌شده
-  علاوه بر آن روی DB (Server Action + merge دوطرفه در ProgressSync).
-  UI هر دو حالت یکسان است.
+- **پیشرفت local-first و تفکیک حساب‌ها**: مهمان‌ها روی کلید legacy
+  localStorage؛ کاربران لاگین‌شده روی کلید جداگانه به‌ازای user id و علاوه
+  بر آن روی DB. ProgressSync پیشرفت مهمان را ابتدا به store کاربر منتقل
+  می‌کند، سپس آن را با DB merge می‌کند؛ تاریخ تکمیل هم حفظ می‌شود.
 - **Snapshot cache در store کلاینت**: `useSyncExternalStore` نیاز به
-  reference پایدار دارد؛ `getProgress` فقط وقتی raw string عوض شود
-  دوباره parse می‌کند (ریشه رفع باگ کرش پیشرفت).
+  reference پایدار دارد؛ `getProgress` برای هر store فقط وقتی raw string
+  عوض شود دوباره parse می‌کند (ریشه رفع باگ کرش پیشرفت).
 - **proxy به‌جای middleware** (قرارداد Next 16) با کانفیگ edge-safe جدا
   (`auth.config.ts`) تا better-sqlite3/bcryptjs وارد edge runtime نشوند.
 - **بیلد کاملاً آفلاین**: فونت محلی، مهاجرت‌های SQL commit شده، seed خودکار.

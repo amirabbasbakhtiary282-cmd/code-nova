@@ -67,11 +67,16 @@ npm run build   # کاملاً آفلاین: فونت‌ها محلی‌اند (
 - `prisma/`: مسیر تولید MySQL (schema + مرجع + راهنما)
 - `docs/`: ARCHITECTURE, DATABASE, SECURITY, PRODUCT, ROADMAP
 
-## تست‌های انجام‌شده
-- `tsc --noEmit`، `eslint`، `next build` (همه سبز، آفلاین)
-- E2E با curl: ثبت‌نام → ورود → تکمیل درس/تمرین → sync مهمان → خروج →
-  ورود مجدد → پیشرفت پایدار در DB
-- jsdom: جریان کامل progress hooks (بدون حلقه بی‌نهایت)، تاب‌آوری در قطعی سرور
+## تست
+دستورهای قابل اجرا در مخزن:
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
+
+در حال حاضر تست خودکار Playwright/jsdom یا `npm test` در مخزن تعریف نشده است.
+Route/API smoke test با `curl` و بررسی مرورگر باید جداگانه اجرا شوند؛ نتیجهٔ اجرای هر نوبت را با توجه به محیط ثبت کنید.
 
 ## هشدار امنیتی
 sandbox iframe برای آموزش و دمو مناسب است، اما برای اجرای کد نامطمئن در

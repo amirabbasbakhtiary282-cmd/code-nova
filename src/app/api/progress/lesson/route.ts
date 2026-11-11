@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getRepositories, RepositoryNotFoundError } from "@/server/repositories";
+import { getRepositories, isRepositoryNotFoundError } from "@/server/repositories";
+import { isValidProgressSlug } from "@/server/services/progress-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -12,24 +13,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { courseSlug?: unknown; lessonSlug?: unknown };
+  let raw: unknown;
   try {
-    body = await request.json();
+    raw = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
   }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return NextResponse.json({ ok: false, error: "request body must be a JSON object" }, { status: 400 });
+  }
 
+  const body = raw as Record<string, unknown>;
   const courseSlug = typeof body.courseSlug === "string" ? body.courseSlug : "";
   const lessonSlug = typeof body.lessonSlug === "string" ? body.lessonSlug : "";
-  if (!courseSlug || !lessonSlug) {
-    return NextResponse.json({ ok: false, error: "courseSlug and lessonSlug are required" }, { status: 400 });
+  if (!isValidProgressSlug(courseSlug, 120) || !isValidProgressSlug(lessonSlug, 120)) {
+    return NextResponse.json({ ok: false, error: "courseSlug and lessonSlug must be valid slugs" }, { status: 400 });
   }
 
   try {
     await getRepositories().progress.markLessonComplete(userId, courseSlug, lessonSlug);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof RepositoryNotFoundError) {
+    if (isRepositoryNotFoundError(error)) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 404 });
     }
     console.error("[api/progress/lesson]", error);

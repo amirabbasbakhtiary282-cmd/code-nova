@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useCourseProgress } from "@/features/progress/hooks";
-import { markLessonComplete } from "@/features/progress/storage";
 import type { Lesson } from "@/types";
 
 interface CourseDetailClientProps {
@@ -47,7 +46,7 @@ export function CourseDetailClient({ courseSlug, courseTitle, courseDescription,
           variant="ghost"
           size="sm"
           onClick={() => {
-            lessons.forEach((lesson) => markLessonComplete(courseSlug, lesson.slug));
+            lessons.forEach((lesson) => progress.markComplete(lesson.slug));
           }}
         >
           علامت‌گذاری همه به‌عنوان خوانده‌شده

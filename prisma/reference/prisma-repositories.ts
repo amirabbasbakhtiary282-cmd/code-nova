@@ -106,7 +106,7 @@ const progressRepo: ProgressRepository = {
     return snapshot;
   },
 
-  async markLessonComplete(userId, courseSlug, lessonSlug) {
+  async markLessonComplete(userId, courseSlug, lessonSlug, completedAt) {
     const prisma = getPrisma();
     const lesson = await prisma.lesson.findFirst({
       where: { slug: lessonSlug, course: { slug: courseSlug } },
@@ -119,36 +119,65 @@ const progressRepo: ProgressRepository = {
       create: { userId, courseId: lesson.course.id },
       update: {},
     });
+    const completedAtDate = completedAt === undefined ? undefined : new Date(completedAt);
+    if (completedAtDate && !Number.isFinite(completedAtDate.getTime())) {
+      throw new Error("Invalid lesson completion timestamp");
+    }
+
     await prisma.lessonProgress.upsert({
       where: { userId_lessonId: { userId, lessonId: lesson.id } },
-      create: { userId, lessonId: lesson.id, courseSlug, lessonSlug },
+      create: { userId, lessonId: lesson.id, courseSlug, lessonSlug, ...(completedAtDate ? { completedAt: completedAtDate } : {}) },
       update: {},
     });
+    if (completedAtDate) {
+      await prisma.lessonProgress.updateMany({
+        where: { userId, lessonId: lesson.id, completedAt: { gt: completedAtDate } },
+        data: { completedAt: completedAtDate },
+      });
+    }
   },
 
-  async markExerciseComplete(userId, exerciseSlug, code = "") {
+  async markExerciseComplete(userId, exerciseSlug, code, completedAt) {
     const prisma = getPrisma();
     const exercise = await prisma.exercise.findUnique({ where: { slug: exerciseSlug } });
     if (!exercise) throw new RepositoryNotFoundError(`exercise not found: ${exerciseSlug}`);
 
+    const completedAtDate = completedAt === undefined ? undefined : new Date(completedAt);
+    if (completedAtDate && !Number.isFinite(completedAtDate.getTime())) {
+      throw new Error("Invalid exercise completion timestamp");
+    }
+
     await prisma.submission.upsert({
       where: { userId_exerciseId: { userId, exerciseId: exercise.id } },
-      create: { userId, exerciseId: exercise.id, exerciseSlug, code, status: "pass" },
-      update: { status: "pass", code },
+      create: {
+        userId,
+        exerciseId: exercise.id,
+        exerciseSlug,
+        code: code ?? "",
+        status: "pass",
+        ...(completedAtDate ? { createdAt: completedAtDate } : {}),
+      },
+      update: { status: "pass", ...(code === undefined ? {} : { code }) },
     });
+    if (completedAtDate) {
+      await prisma.submission.updateMany({
+        where: { userId, exerciseId: exercise.id, createdAt: { gt: completedAtDate } },
+        data: { createdAt: completedAtDate },
+      });
+    }
   },
 
   async mergeSnapshot(userId, snapshot) {
     for (const item of Object.values(snapshot.lessons ?? {})) {
       try {
-        await this.markLessonComplete(userId, item.courseSlug, item.lessonSlug);
+        await this.markLessonComplete(userId, item.courseSlug, item.lessonSlug, item.completedAt);
       } catch (error) {
         if (!(error instanceof RepositoryNotFoundError)) throw error;
       }
     }
     for (const item of Object.values(snapshot.exercises ?? {})) {
       try {
-        await this.markExerciseComplete(userId, item.exerciseSlug);
+        await this.markExerciseComplete(userId, item.exerciseSlug, undefined, item.completedAt);
       } catch (error) {
         if (!(error instanceof RepositoryNotFoundError)) throw error;
       }

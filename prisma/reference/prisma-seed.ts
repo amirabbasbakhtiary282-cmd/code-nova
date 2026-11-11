@@ -3,9 +3,9 @@
 // `npx prisma migrate dev` (e.g. copy to prisma/seed.ts and register it in
 // prisma.config.ts under migrations.seed, or run with tsx).
 import { PrismaClient } from "../../generated/prisma/client.js";
-// After copying, use "@/content/courses/courses" and "@/content/courses/lessons":
+// The aggregate is the content source of truth for both new and legacy courses.
 import { courses as contentCourses } from "../../src/content/courses/courses";
-import { lessonExercises, lessonsByCourse } from "../../src/content/courses/lessons";
+import { exercisesOf, lessonExercises, lessonsByCourse } from "../../src/content/courses";
 
 const prisma = new PrismaClient();
 
@@ -47,7 +47,7 @@ async function main() {
           content: lesson.content,
           codeExample: JSON.stringify(lesson.codeExample),
           keyPoints: JSON.stringify(lesson.keyPoints),
-          exercise: JSON.stringify(lesson.exercise),
+          exercise: JSON.stringify(exercisesOf(lesson)),
         },
         update: {
           title: lesson.title,
@@ -56,7 +56,7 @@ async function main() {
           content: lesson.content,
           codeExample: JSON.stringify(lesson.codeExample),
           keyPoints: JSON.stringify(lesson.keyPoints),
-          exercise: JSON.stringify(lesson.exercise),
+          exercise: JSON.stringify(exercisesOf(lesson)),
         },
       });
     }
