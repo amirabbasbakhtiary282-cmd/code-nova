@@ -132,10 +132,10 @@ export function HomePageContent() {
 
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <div className="nft-float rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-emerald-300 backdrop-blur-xl">
-                    درس ۱ کامل شد ✓
+                    نمونه نمایشی — درس ۱ کامل ✓
                   </div>
                   <div className="nft-float rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-violet-300 backdrop-blur-xl" style={{ animationDelay: "-1s" }}>
-                    Progress: 35%
+                    نمونه پیشرفت: 35%
                     <div className="mt-2 h-1.5 rounded-full bg-white/10">
                       <div className="h-full w-[35%] rounded-full bg-[linear-gradient(135deg,#8B5CF6,#3B82F6)]" />
                     </div>

@@ -1,5 +1,10 @@
 import type { CourseProgress, LessonProgress, UserProgress } from "@/features/progress/types";
 
+/**
+ * The original key remains the anonymous/guest store so existing browser
+ * progress can be migrated after login. Authenticated progress is isolated by
+ * user id, preventing one account's local data from being merged into another.
+ */
 const STORAGE_KEY = "codenova:progress:v1";
 const PROGRESS_EVENT = "codenova:progress-updated";
 
@@ -9,8 +14,19 @@ const defaultProgress: UserProgress = {
   learningDays: [],
 };
 
+interface SnapshotCacheEntry {
+  raw: string | null;
+  snapshot: UserProgress;
+}
+
+const snapshotCache = new Map<string, SnapshotCacheEntry>();
+
 function isBrowser() {
   return typeof window !== "undefined";
+}
+
+function storageKey(userId?: string | null) {
+  return userId ? `${STORAGE_KEY}:user:${encodeURIComponent(userId)}` : STORAGE_KEY;
 }
 
 // Local-day helper lives in @/lib/dates (shared with the server data layer);
@@ -18,9 +34,22 @@ function isBrowser() {
 import { localDayISO } from "@/lib/dates";
 export { localDayISO };
 
-function emitProgressChange() {
+export function getEmptyProgress(): UserProgress {
+  return defaultProgress;
+}
+
+function earliestTimestamp(first?: string, second?: string): string | undefined {
+  const firstMs = first ? Date.parse(first) : Number.NaN;
+  const secondMs = second ? Date.parse(second) : Number.NaN;
+  if (Number.isFinite(firstMs) && Number.isFinite(secondMs)) return firstMs <= secondMs ? first : second;
+  if (Number.isFinite(firstMs)) return first;
+  if (Number.isFinite(secondMs)) return second;
+  return first ?? second;
+}
+
+function emitProgressChange(key: string) {
   if (!isBrowser()) return;
-  window.dispatchEvent(new CustomEvent(PROGRESS_EVENT));
+  window.dispatchEvent(new CustomEvent(PROGRESS_EVENT, { detail: key }));
 }
 
 function sanitizeProgress(raw: unknown): UserProgress {
@@ -46,32 +75,30 @@ function sanitizeProgress(raw: unknown): UserProgress {
 
 /**
  * Snapshot cache — REQUIRED by `useSyncExternalStore`.
- * React calls getSnapshot repeatedly and compares references; returning a
- * fresh object each time (e.g. from JSON.parse) causes an infinite
- * re-render loop ("The result of getSnapshot should be cached").
- * We only re-parse when the raw stored string actually changed.
+ * React compares snapshot references; returning a fresh object for each read
+ * causes an infinite re-render loop. Cache separately per guest/user store and
+ * only re-parse when its raw localStorage value changes.
  */
-let cachedRaw: string | null = null;
-let cachedSnapshot: UserProgress = defaultProgress;
-
-export function getProgress(): UserProgress {
+export function getProgress(userId?: string | null): UserProgress {
   if (!isBrowser()) return defaultProgress;
 
+  const key = storageKey(userId);
   let raw: string | null;
   try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
+    raw = window.localStorage.getItem(key);
   } catch (error) {
     console.warn("[progress] localStorage is not readable:", error);
-    return defaultProgress;
+    return snapshotCache.get(key)?.snapshot ?? defaultProgress;
   }
 
+  const cached = snapshotCache.get(key);
   if (raw === null) {
-    cachedRaw = null;
-    cachedSnapshot = defaultProgress;
+    if (cached?.raw === null) return cached.snapshot;
+    snapshotCache.set(key, { raw: null, snapshot: defaultProgress });
     return defaultProgress;
   }
 
-  if (raw === cachedRaw) return cachedSnapshot;
+  if (raw === cached?.raw) return cached.snapshot;
 
   let parsed: UserProgress;
   try {
@@ -81,34 +108,65 @@ export function getProgress(): UserProgress {
     parsed = defaultProgress;
   }
 
-  cachedRaw = raw;
-  cachedSnapshot = parsed;
+  snapshotCache.set(key, { raw, snapshot: parsed });
   return parsed;
 }
 
-function saveProgress(next: UserProgress) {
-  if (!isBrowser()) return;
+function saveProgress(next: UserProgress, userId?: string | null): boolean {
+  if (!isBrowser()) return false;
+
+  const key = storageKey(userId);
   const raw = JSON.stringify(next);
+  let saved = true;
+  let cachedRaw: string | null = raw;
   try {
-    window.localStorage.setItem(STORAGE_KEY, raw);
+    window.localStorage.setItem(key, raw);
   } catch (error) {
     // Safari private mode / quota errors must not freeze the UI, but we
-    // surface them instead of hiding them.
+    // surface them instead of hiding them. Keep the in-memory snapshot usable
+    // while localStorage is read-only; otherwise the next getProgress() would
+    // immediately replace it with the older persisted value.
+    saved = false;
+    try {
+      cachedRaw = window.localStorage.getItem(key);
+    } catch {
+      cachedRaw = snapshotCache.get(key)?.raw ?? null;
+    }
     console.warn("[progress] could not persist to localStorage:", error);
   }
-  cachedRaw = raw;
-  cachedSnapshot = next;
-  emitProgressChange();
+
+  snapshotCache.set(key, { raw: cachedRaw, snapshot: next });
+  emitProgressChange(key);
+  return saved;
 }
 
-export function subscribeProgress(callback: () => void) {
+/** Remove legacy guest data only after a user-scoped copy has been persisted. */
+export function clearGuestProgress(): boolean {
+  if (!isBrowser()) return false;
+
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("[progress] could not clear migrated guest progress:", error);
+    return false;
+  }
+
+  snapshotCache.set(STORAGE_KEY, { raw: null, snapshot: defaultProgress });
+  emitProgressChange(STORAGE_KEY);
+  return true;
+}
+
+export function subscribeProgress(callback: () => void, userId?: string | null) {
   if (!isBrowser()) return () => {};
 
-  const handler = () => callback();
+  const key = storageKey(userId);
+  const handler = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === key) callback();
+  };
   const storageHandler = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY) {
-      // Another tab changed the store — drop the cache so getProgress re-parses.
-      cachedRaw = null;
+    if (event.key === key) {
+      // Another tab changed this store — drop only its cache entry.
+      snapshotCache.delete(key);
       callback();
     }
   };
@@ -122,73 +180,80 @@ export function subscribeProgress(callback: () => void) {
   };
 }
 
-export function markLessonComplete(courseSlug: string, lessonSlug: string) {
-  const current = getProgress();
+export function markLessonComplete(courseSlug: string, lessonSlug: string, userId?: string | null) {
+  const current = getProgress(userId);
   const key = `${courseSlug}:${lessonSlug}`;
   const now = new Date().toISOString();
   const day = localDayISO();
   const safeDays = Array.isArray(current.learningDays) ? current.learningDays : [];
+  const completedAt = earliestTimestamp(current.lessons[key]?.completedAt, now) ?? now;
 
   const next: UserProgress = {
     ...current,
     lessons: {
       ...current.lessons,
-      [key]: { courseSlug, lessonSlug, completed: true, completedAt: now },
+      [key]: { courseSlug, lessonSlug, completed: true, completedAt },
     },
     learningDays: safeDays.includes(day) ? safeDays : [...safeDays, day],
     updatedAt: now,
   };
 
-  saveProgress(next);
+  saveProgress(next, userId);
 }
 
-export function markExerciseComplete(exerciseSlug: string) {
-  const current = getProgress();
+export function markExerciseComplete(exerciseSlug: string, userId?: string | null) {
+  const current = getProgress(userId);
   const now = new Date().toISOString();
   const day = localDayISO();
   const safeDays = Array.isArray(current.learningDays) ? current.learningDays : [];
+  const completedAt = earliestTimestamp(current.exercises[exerciseSlug]?.completedAt, now) ?? now;
 
   const next: UserProgress = {
     ...current,
     exercises: {
       ...current.exercises,
-      [exerciseSlug]: { exerciseSlug, completed: true, completedAt: now },
+      [exerciseSlug]: { exerciseSlug, completed: true, completedAt },
     },
     learningDays: safeDays.includes(day) ? safeDays : [...safeDays, day],
     updatedAt: now,
   };
 
-  saveProgress(next);
+  saveProgress(next, userId);
 }
 
 /**
- * Merge a remote (server/DB) progress snapshot into the local store.
+ * Merge a remote (server/DB) progress snapshot into a specific local store.
  * Union semantics: a lesson/exercise is completed if either side says so;
- * the earliest completedAt wins. Used when a logged-in user's DB progress
- * is hydrated into the client store.
+ * the earliest completedAt wins.
  */
-export function mergeProgress(remote: UserProgress) {
-  if (!isBrowser()) return;
-  const local = getProgress();
+export function mergeProgress(remote: UserProgress, userId?: string | null): boolean {
+  if (!isBrowser()) return false;
+  const local = getProgress(userId);
 
   const lessons: Record<string, LessonProgress> = { ...local.lessons };
   for (const [key, item] of Object.entries(remote.lessons ?? {})) {
+    if (!item?.completed) continue;
     const existing = lessons[key];
-    if (!existing?.completed) {
-      lessons[key] = { ...item, completed: true };
-    } else if (item.completedAt && existing.completedAt && item.completedAt < existing.completedAt) {
-      lessons[key] = { ...existing, completedAt: item.completedAt };
-    }
+    const completedAt = earliestTimestamp(existing?.completedAt, item.completedAt);
+    lessons[key] = {
+      ...existing,
+      ...item,
+      completed: true,
+      ...(completedAt ? { completedAt } : {}),
+    };
   }
 
   const exercises: UserProgress["exercises"] = { ...local.exercises };
   for (const [key, item] of Object.entries(remote.exercises ?? {})) {
+    if (!item?.completed) continue;
     const existing = exercises[key];
-    if (!existing?.completed) {
-      exercises[key] = { ...item, completed: true };
-    } else if (item.completedAt && existing.completedAt && item.completedAt < existing.completedAt) {
-      exercises[key] = { ...existing, completedAt: item.completedAt };
-    }
+    const completedAt = earliestTimestamp(existing?.completedAt, item.completedAt);
+    exercises[key] = {
+      ...existing,
+      ...item,
+      completed: true,
+      ...(completedAt ? { completedAt } : {}),
+    };
   }
 
   const learningDays = Array.from(new Set([...(local.learningDays ?? []), ...(remote.learningDays ?? [])])).sort();
@@ -200,25 +265,25 @@ export function mergeProgress(remote: UserProgress) {
     updatedAt: new Date().toISOString(),
   };
 
-  saveProgress(next);
+  return saveProgress(next, userId);
 }
 
-export function resetProgress() {
-  saveProgress(defaultProgress);
+export function resetProgress(userId?: string | null) {
+  saveProgress(defaultProgress, userId);
 }
 
-export function getLessonProgress(courseSlug: string, lessonSlug: string): LessonProgress | null {
-  const progress = getProgress();
+export function getLessonProgress(courseSlug: string, lessonSlug: string, userId?: string | null): LessonProgress | null {
+  const progress = getProgress(userId);
   const key = `${courseSlug}:${lessonSlug}`;
   return progress.lessons[key] ?? null;
 }
 
-export function isLessonCompleted(courseSlug: string, lessonSlug: string): boolean {
-  return Boolean(getLessonProgress(courseSlug, lessonSlug)?.completed);
+export function isLessonCompleted(courseSlug: string, lessonSlug: string, userId?: string | null): boolean {
+  return Boolean(getLessonProgress(courseSlug, lessonSlug, userId)?.completed);
 }
 
-export function getCourseProgress(courseSlug: string, lessonSlugs: string[]): CourseProgress {
-  const progress = getProgress();
+export function getCourseProgress(courseSlug: string, lessonSlugs: string[], userId?: string | null): CourseProgress {
+  const progress = getProgress(userId);
   const completedLessons = lessonSlugs.filter((lessonSlug) => {
     const key = `${courseSlug}:${lessonSlug}`;
     return progress.lessons[key]?.completed;
@@ -235,6 +300,6 @@ export function getCourseProgress(courseSlug: string, lessonSlugs: string[]): Co
   };
 }
 
-export function isExerciseCompleted(exerciseSlug: string): boolean {
-  return Boolean(getProgress().exercises[exerciseSlug]?.completed);
+export function isExerciseCompleted(exerciseSlug: string, userId?: string | null): boolean {
+  return Boolean(getProgress(userId).exercises[exerciseSlug]?.completed);
 }

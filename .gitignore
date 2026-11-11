@@ -13,8 +13,8 @@ pnpm-debug.log*
 
 # env
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # self-hosted fonts (copied from node_modules by scripts/copy-fonts.mjs)
 public/fonts/

@@ -41,9 +41,9 @@ export interface ProgressRepository {
   /** Full progress snapshot for a user (empty snapshot when nothing stored). */
   getSnapshot(userId: number): Promise<ProgressSnapshotDTO>;
   /** Marks a lesson complete; auto-enrolls the user in the course. */
-  markLessonComplete(userId: number, courseSlug: string, lessonSlug: string): Promise<void>;
-  /** Records a solved exercise submission. */
-  markExerciseComplete(userId: number, exerciseSlug: string, code?: string): Promise<void>;
+  markLessonComplete(userId: number, courseSlug: string, lessonSlug: string, completedAt?: string): Promise<void>;
+  /** Records a solved exercise submission; an omitted code preserves any existing submission. */
+  markExerciseComplete(userId: number, exerciseSlug: string, code?: string, completedAt?: string): Promise<void>;
   /**
    * Idempotently merges a client snapshot (e.g. a guest's localStorage data)
    * into the DB and returns the resulting authoritative snapshot.

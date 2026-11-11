@@ -6,7 +6,7 @@ import type { AppRepositories } from "./types";
 import { createSqliteRepositories } from "./sqlite";
 
 export * from "./types";
-export { RepositoryNotFoundError } from "./sqlite";
+export { isRepositoryNotFoundError, RepositoryNotFoundError } from "./sqlite";
 
 const globalForRepos = globalThis as typeof globalThis & {
   __codenovaRepos?: AppRepositories;

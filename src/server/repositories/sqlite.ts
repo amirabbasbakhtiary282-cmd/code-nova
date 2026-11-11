@@ -1,7 +1,7 @@
 // SQLite implementation of the repository interfaces (live dev/preview DB).
 // better-sqlite3 is synchronous; methods keep the async contract so the
 // Prisma/MySQL implementation can be dropped in without touching callers.
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as schema from "@/db/schema";
 import { localDayISO } from "@/lib/dates";
@@ -19,6 +19,11 @@ export class RepositoryNotFoundError extends Error {
     super(message);
     this.name = "RepositoryNotFoundError";
   }
+}
+
+/** Bundlers may duplicate this class across Next.js route chunks. */
+export function isRepositoryNotFoundError(error: unknown): error is RepositoryNotFoundError {
+  return error instanceof Error && error.name === "RepositoryNotFoundError";
 }
 
 const usersRepo: UserRepository = {
@@ -93,7 +98,7 @@ const progressRepo: ProgressRepository = {
     return snapshot;
   },
 
-  async markLessonComplete(userId, courseSlug, lessonSlug) {
+  async markLessonComplete(userId, courseSlug, lessonSlug, completedAt) {
     const db = getDb();
     const course = db.select().from(schema.courses).where(eq(schema.courses.slug, courseSlug)).get();
     if (!course) throw new RepositoryNotFoundError(`course not found: ${courseSlug}`);
@@ -110,27 +115,54 @@ const progressRepo: ProgressRepository = {
       .onConflictDoNothing()
       .run();
 
+    const completedAtDate = completedAt === undefined ? undefined : new Date(completedAt);
+    if (completedAtDate && !Number.isFinite(completedAtDate.getTime())) {
+      throw new Error("Invalid lesson completion timestamp");
+    }
+
     db.insert(schema.lessonProgress)
-      .values({ userId, lessonId: lesson.id, courseSlug, lessonSlug })
-      .onConflictDoNothing()
+      .values({ userId, lessonId: lesson.id, courseSlug, lessonSlug, ...(completedAtDate ? { completedAt: completedAtDate } : {}) })
+      .onConflictDoUpdate({
+        target: [schema.lessonProgress.userId, schema.lessonProgress.lessonId],
+        set: { completedAt: sql`MIN(${schema.lessonProgress.completedAt}, excluded.completed_at)` },
+      })
       .run();
   },
 
-  async markExerciseComplete(userId, exerciseSlug, code = "") {
+  async markExerciseComplete(userId, exerciseSlug, code, completedAt) {
     const db = getDb();
     const exercise = db.select().from(schema.exercises).where(eq(schema.exercises.slug, exerciseSlug)).get();
     if (!exercise) throw new RepositoryNotFoundError(`exercise not found: ${exerciseSlug}`);
 
+    const completedAtDate = completedAt === undefined ? undefined : new Date(completedAt);
+    if (completedAtDate && !Number.isFinite(completedAtDate.getTime())) {
+      throw new Error("Invalid exercise completion timestamp");
+    }
+
     db.insert(schema.submissions)
-      .values({ userId, exerciseId: exercise.id, exerciseSlug, code, status: "pass" })
-      .onConflictDoUpdate({ target: [schema.submissions.userId, schema.submissions.exerciseId], set: { status: "pass", code } })
+      .values({
+        userId,
+        exerciseId: exercise.id,
+        exerciseSlug,
+        status: "pass",
+        ...(code === undefined ? {} : { code }),
+        ...(completedAtDate ? { createdAt: completedAtDate } : {}),
+      })
+      .onConflictDoUpdate({
+        target: [schema.submissions.userId, schema.submissions.exerciseId],
+        set: {
+          status: "pass",
+          ...(code === undefined ? {} : { code }),
+          createdAt: sql`MIN(${schema.submissions.createdAt}, excluded.created_at)`,
+        },
+      })
       .run();
   },
 
   async mergeSnapshot(userId, snapshot) {
     for (const item of Object.values(snapshot.lessons ?? {})) {
       try {
-        await this.markLessonComplete(userId, item.courseSlug, item.lessonSlug);
+        await this.markLessonComplete(userId, item.courseSlug, item.lessonSlug, item.completedAt);
       } catch (error) {
         // Stale/unknown slugs from an older content version are skipped, not fatal.
         if (!(error instanceof RepositoryNotFoundError)) throw error;
@@ -138,7 +170,7 @@ const progressRepo: ProgressRepository = {
     }
     for (const item of Object.values(snapshot.exercises ?? {})) {
       try {
-        await this.markExerciseComplete(userId, item.exerciseSlug);
+        await this.markExerciseComplete(userId, item.exerciseSlug, undefined, item.completedAt);
       } catch (error) {
         if (!(error instanceof RepositoryNotFoundError)) throw error;
       }

@@ -1,59 +1,67 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useSession } from "next-auth/react";
 import { syncExerciseComplete, syncLessonComplete } from "@/features/progress/actions";
 import {
   getCourseProgress,
+  getEmptyProgress,
   getProgress,
   markExerciseComplete,
   markLessonComplete,
   subscribeProgress,
 } from "@/features/progress/storage";
+import type { UserProgress } from "@/features/progress/types";
 
-function useProgressStore() {
-  // getProgress is reference-stable (cached snapshot), so this is safe with
-  // useSyncExternalStore. getServerSnapshot returns a module-level constant.
-  return useSyncExternalStore(subscribeProgress, getProgress, getProgress);
+function useProgressStore(): { progress: UserProgress; userId: string | null } {
+  const { data: session, status } = useSession();
+  const userId = status === "authenticated" && session?.user?.id ? String(session.user.id) : null;
+
+  const subscribe = useCallback((callback: () => void) => subscribeProgress(callback, userId), [userId]);
+  const getSnapshot = useCallback(() => getProgress(userId), [userId]);
+  const getServerSnapshot = useCallback(() => getEmptyProgress(), []);
+  const progress = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  return { progress, userId };
 }
 
 /**
  * Local-first completion with server sync for logged-in users.
- * The server action is a no-op for guests ({ synced: false }) — localStorage
- * stays their store of record. Failures never block or revert local progress;
- * ProgressSync re-merges on the next authenticated page load.
+ * Guests use the anonymous local store; authenticated progress is kept in a
+ * per-user store and mirrored to the server. Failures never revert local data.
  */
-function completeLesson(courseSlug: string, lessonSlug: string) {
-  markLessonComplete(courseSlug, lessonSlug);
+function completeLesson(courseSlug: string, lessonSlug: string, userId: string | null) {
+  markLessonComplete(courseSlug, lessonSlug, userId);
   void syncLessonComplete(courseSlug, lessonSlug).catch((error) => {
     console.warn("[progress] server sync unavailable (kept locally):", error);
   });
 }
 
-function completeExercise(exerciseSlug: string) {
-  markExerciseComplete(exerciseSlug);
-  void syncExerciseComplete(exerciseSlug).catch((error) => {
+function completeExercise(exerciseSlug: string, userId: string | null, code: string) {
+  markExerciseComplete(exerciseSlug, userId);
+  void syncExerciseComplete(exerciseSlug, code).catch((error) => {
     console.warn("[progress] server sync unavailable (kept locally):", error);
   });
 }
 
 export function useLessonProgress(courseSlug: string, lessonSlug: string) {
-  const store = useProgressStore();
+  const { progress, userId } = useProgressStore();
   const key = `${courseSlug}:${lessonSlug}`;
-  const item = store.lessons[key];
+  const item = progress.lessons[key];
 
   return {
     completed: Boolean(item?.completed),
     completedAt: item?.completedAt,
-    markComplete: () => completeLesson(courseSlug, lessonSlug),
+    markComplete: () => completeLesson(courseSlug, lessonSlug, userId),
   };
 }
 
 export function useCourseProgress(courseSlug: string, lessonSlugs: string[]) {
-  const store = useProgressStore();
-  const lessons = store.lessons;
+  const { progress, userId } = useProgressStore();
+  const lessons = progress.lessons;
 
   return useMemo(() => {
-    const computed = getCourseProgress(courseSlug, lessonSlugs);
+    const computed = getCourseProgress(courseSlug, lessonSlugs, userId);
     const completedSet = new Set(
       lessonSlugs.filter((slug) => {
         const key = `${courseSlug}:${slug}`;
@@ -64,22 +72,23 @@ export function useCourseProgress(courseSlug: string, lessonSlugs: string[]) {
     return {
       ...computed,
       completedSet,
+      markComplete: (lessonSlug: string) => completeLesson(courseSlug, lessonSlug, userId),
     };
-  }, [courseSlug, lessonSlugs, lessons]);
+  }, [courseSlug, lessonSlugs, lessons, userId]);
 }
 
 export function useExerciseProgress(exerciseSlug: string) {
-  const store = useProgressStore();
-  const item = exerciseSlug ? store.exercises[exerciseSlug] : undefined;
+  const { progress, userId } = useProgressStore();
+  const item = exerciseSlug ? progress.exercises[exerciseSlug] : undefined;
 
   return {
     completed: Boolean(item?.completed),
-    markComplete: () => {
-      if (exerciseSlug) completeExercise(exerciseSlug);
+    markComplete: (code: string) => {
+      if (exerciseSlug) completeExercise(exerciseSlug, userId, code);
     },
   };
 }
 
 export function useUserProgress() {
-  return useProgressStore();
+  return useProgressStore().progress;
 }

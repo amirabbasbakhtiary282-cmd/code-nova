@@ -76,7 +76,7 @@ model Lesson {
   content         String @db.Text
   codeExample     String @map("code_example") @db.Text // JSON: {language, code, outputPreview?}
   keyPoints       String @map("key_points") @db.Text // JSON: string[]
-  exercise        String @db.Text // JSON: {title, description, starterCode, expectedHint}
+  exercise        String @db.Text // JSON: LessonExercise[] (single legacy exercise is stored as a one-item array)
 
   course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
   exercises      Exercise[]

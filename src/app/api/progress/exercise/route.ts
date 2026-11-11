@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getRepositories, RepositoryNotFoundError } from "@/server/repositories";
+import { getRepositories, isRepositoryNotFoundError } from "@/server/repositories";
+import { isValidProgressSlug } from "@/server/services/progress-validation";
+import { checkExerciseSubmission } from "@/server/services/exercise-validation";
 
 export const dynamic = "force-dynamic";
 
@@ -12,24 +14,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { exerciseSlug?: unknown; code?: unknown };
+  let raw: unknown;
   try {
-    body = await request.json();
+    raw = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
   }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return NextResponse.json({ ok: false, error: "request body must be a JSON object" }, { status: 400 });
+  }
 
+  const body = raw as Record<string, unknown>;
   const exerciseSlug = typeof body.exerciseSlug === "string" ? body.exerciseSlug : "";
-  const code = typeof body.code === "string" ? body.code : "";
-  if (!exerciseSlug) {
-    return NextResponse.json({ ok: false, error: "exerciseSlug is required" }, { status: 400 });
+  if (!isValidProgressSlug(exerciseSlug, 190)) {
+    return NextResponse.json({ ok: false, error: "exerciseSlug must be a valid slug" }, { status: 400 });
+  }
+  if (typeof body.code !== "string") {
+    return NextResponse.json({ ok: false, error: "code must be a JSON-encoded editor snapshot" }, { status: 400 });
+  }
+  if (body.code.length > 200_000) {
+    return NextResponse.json({ ok: false, error: "code is too large" }, { status: 413 });
+  }
+
+  const check = checkExerciseSubmission(exerciseSlug, body.code);
+  if (!check.ok) {
+    const status = check.reason === "unknown-exercise" ? 404 : check.reason === "failed-check" ? 422 : 400;
+    return NextResponse.json({ ok: false, error: check.reason }, { status });
   }
 
   try {
-    await getRepositories().progress.markExerciseComplete(userId, exerciseSlug, code);
+    await getRepositories().progress.markExerciseComplete(userId, exerciseSlug, body.code);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof RepositoryNotFoundError) {
+    if (isRepositoryNotFoundError(error)) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 404 });
     }
     console.error("[api/progress/exercise]", error);
